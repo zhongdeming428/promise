@@ -1,4 +1,4 @@
-import { MyPromise } from "index";
+import {MyPromise} from "index";
 
 /**resolve 函数类型 */
 export type ResolveFunc = (value: any) => void;

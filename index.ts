@@ -1,10 +1,11 @@
-import type { CallbackObj, Executor, OnFulfilledFunc, onRejectedFunc, PromiseStatus, ResolveFunc } from './types';
+import type { CallbackObj, Executor, OnFulfilledFunc, onRejectedFunc, PromiseStatus, RejectFunc, ResolveFunc } from './types';
 
 class MyPromise<T = void> {
   private status: PromiseStatus = 'PENDING';
   private value: T;
   private reason: any;
-  private callbacks: CallbackObj<T>[] = [];
+  private onResolveCallbacks: Array<OnFulfilledFunc<T>> = [];
+  private onRejectCallbacks: Array<onRejectedFunc> = [];
 
   constructor (exector: Executor<T>) {
     try {
@@ -23,7 +24,7 @@ class MyPromise<T = void> {
     }
     this.value = value;
     this.status = 'FULFILLED';
-    this.callbacks.forEach(cb => this.handle(cb));
+    this.onResolveCallbacks.forEach(onResolveCallback => onResolveCallback(value));
   }
 
   public reject (reason: any) {
@@ -32,21 +33,63 @@ class MyPromise<T = void> {
     }
     this.reason = reason;
     this.status = 'REJECTED';
-    this.callbacks.forEach(cb => this.handle(cb));
+    this.onRejectCallbacks.forEach(onRejectCallback => onRejectCallback(reason));
   }
 
-  public then (onFulfilled?: OnFulfilledFunc<T>, onRejected?: onRejectedFunc) {
-    const newPro = new MyPromise((resolve: ResolveFunc, reject) => {
-      this.handle({
-        onFulfilled,
-        onRejected,
-        resolve,
-        reject,
-        // 通过闭包获取当前 then 返回的 promise，在之后的处理中进行比较
-        getPreviousPromise() {
-          return newPro;
-        }
-      });
+  public then (onFulfilled?: OnFulfilledFunc<T>, onReject?: onRejectedFunc) {
+    const validOnFulfilledFunc = onFulfilled && typeof onFulfilled === 'function' ? onFulfilled : (v => v);
+    const validOnRejectFunc = onReject && typeof onReject === 'function' ? onReject : (r => { throw r });
+
+    const newPro = new MyPromise((resolve, reject) => {
+      if (this.status === 'PENDING') {
+        this.onRejectCallbacks.push(reason => {
+          setTimeout(() => {
+            try {
+              const retReason = validOnRejectFunc(reason);
+              this.resolvePromise(newPro, retReason, resolve, reject);
+            } catch (err) {
+              reject(err);
+            }
+          });
+        });
+        this.onResolveCallbacks.push(value => {
+          setTimeout(() => {
+            try {
+              const retValue = validOnFulfilledFunc(value);
+              this.resolvePromise(newPro, retValue, resolve, reject);
+            } catch (err) {
+              reject(err);
+            }
+          });
+        });
+        return;
+      }
+
+      if (this.status === 'FULFILLED') {
+        setTimeout(() => {
+          try {
+            const retValue = validOnFulfilledFunc(this.value);
+            this.resolvePromise(newPro, retValue, resolve, reject);
+          } catch (err) {
+            reject(err);
+          } finally {
+            return;
+          } 
+        });
+      }
+
+      if (this.status === 'REJECTED') {
+        setTimeout(() => {
+          try {
+            const retReason = validOnRejectFunc(this.reason);
+            this.resolvePromise(newPro, retReason, resolve, reject);
+          } catch (err) {
+            reject(err);
+          } finally {
+            return;
+          } 
+        });
+      }
     });
     return newPro;
   }
@@ -78,44 +121,71 @@ class MyPromise<T = void> {
 
   }
 
-  private handle (cb: CallbackObj<T>) {
-    if (this.status === 'PENDING') {
-      this.callbacks.push(cb);
+  private resolvePromise (
+    promise: MyPromise,
+    value: any,
+    resolve: ResolveFunc,
+    reject: RejectFunc  
+  ) {
+    let called = false;
+    if (promise === value) {
+      throw new TypeError('返回了相同的 promise');
+    }
+    if (value instanceof MyPromise) {
+      value.then(
+        retValue => this.resolvePromise(promise, retValue, resolve, reject),
+        reject
+      );
       return;
     }
-
-    const fulfilled = this.status === 'FULFILLED';
-    const callback = fulfilled
-      ? (cb.onFulfilled && typeof cb.onFulfilled === 'function' ? cb.onFulfilled : (v => v))
-      : (cb.onRejected && typeof cb.onRejected === 'function' ? cb.onRejected : (v => { throw v }));
-    const valueOrReason = fulfilled
-      ? this.value
-      : this.reason;
-
-    setTimeout(() => {
-      try {
-        let ret = callback(valueOrReason);
-        const previousPro = cb.getPreviousPromise();
-        if (ret === previousPro) {
-          cb.reject(new TypeError('返回了相同的 Promise 实例'));
+    try {
+      if (value !== null && ['function', 'object'].includes(typeof value)) {
+        const then = value.then;
+        if (typeof then === 'function') {
+          then.call(
+            value,
+            retValue => {
+              if (called) {
+                return;
+              }
+              called = true;
+              this.resolvePromise(promise, retValue, resolve, reject);
+            },
+            reason => {
+              if (called) {
+                return;
+              }
+              called = true;
+              reject(reason);
+            }
+          );
+          return;
         }
-        if (['function', 'object'].includes(typeof ret)) {
-          const then = ret.then;
-          if (typeof then === 'function') {
-            then.call(
-              ret,
-              retValue => cb.resolve(retValue),
-              retReason => cb.reject(retReason)
-            );
-            return;
-          }
-        }
-        cb.resolve(ret);
-      } catch (err) {
-        cb.reject(err);
       }
-    });
+      resolve(value);
+    } catch (err) {
+      if (called) {
+        return;
+      }
+      called = true;
+      reject(err);
+    }
   }
 }
 
-export { MyPromise };
+const deferred = () => {
+  const deferred = {} as {
+    promise: MyPromise;
+    resolve: ResolveFunc;
+    reject: RejectFunc;
+  };
+  deferred.promise = new MyPromise((res, rej) => {
+    deferred.resolve = res;
+    deferred.reject = rej;
+  });
+  return deferred;
+};
+export {
+  MyPromise,
+  deferred
+}

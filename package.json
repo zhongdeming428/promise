@@ -1,7 +1,7 @@
 {
   "scripts": {
     "build": "rimraf ./dist && tsc",
-    "test": "yarn build && yarn run promises-aplus-tests ./index.test.js"
+    "test": "yarn build && yarn run promises-aplus-tests ./dist/index.js"
   },
   "devDependencies": {
     "promises-aplus-tests": "^2.1.2",
