@@ -105,20 +105,36 @@ class MyPromise<T = void> {
     );
   }
 
-  public static resolve = () => {
-
+  public static resolve = (value: any): MyPromise<any> => {
+    return new MyPromise((res) => res(value));
   }
 
-  public static reject = () => {
-
+  public static reject = (reason: any): MyPromise<any> => {
+    return new MyPromise((_, rej) => rej(reason));
   }
 
-  public static all = () => {
+  public static all = (promises: MyPromise<any>[]) => {
+    return new MyPromise((resolve, reject) => {
+      const values = Array(promises.length);
+      let fulfilledCount = 0;
+      const getOnFulfilled = (index: number) => value => {
+        values[index] = value;
+        fulfilledCount++;
+        if (fulfilledCount === promises.length) {
+          resolve(values);
+        }
+      };
 
+      promises.forEach((promise, idx) => {
+        promise.then(getOnFulfilled(idx), reject);
+      });
+    });
   }
 
-  public static race = () => {
-
+  public static race = (promises: MyPromise<any>[]) => {
+    return new MyPromise((resolve, reject) => {
+      promises.forEach(promise => promise.then(resolve, reject));
+    });
   }
 
   private resolvePromise (
